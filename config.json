@@ -1,0 +1,57 @@
+{
+	"name": "SQL Assistant",
+	"namespace": "Intersect\\SqlAssistant",
+	"description": "Adds an AI-powered <b>Generate query</b> assistant for administrators to the Dynamic SQL field editor in the Online Designer and to the Database Query Tool in the Control Center, using REDCap's configured GenAI service. Only the database <b>schema</b> (table and column definitions) is sent to the AI service, never data from the tables. For Dynamic SQL fields, the project's structure (fields, events, arms, repeating instruments, roles and DAGs) is also sent. Generated queries are checked before they are shown and are never run or applied automatically. Available to super users only.",
+	"documentation": "README.md",
+	"framework-version": 17,
+	"authors": [
+		{
+			"name": "Aidan Wilson",
+			"email": "aidan.wilson@intersect.org.au",
+			"institution": "Intersect Australia"
+		}
+	],
+	"compatibility": {
+		"php-version-min": "8.0.0",
+		"redcap-version-min": "17.0.1"
+	},
+	"enable-every-page-hooks-on-system-pages": true,
+	"auth-ajax-actions": [
+		"generate"
+	],
+	"system-settings": [
+		{
+			"key": "provider-heading",
+			"name": "<b>AI service</b><br>The module uses whichever GenAI service is configured at the system level, or the project's override if one is set. On the Database Query Tool a system-level GenAI configuration is required. Only super users see the assistant.",
+			"type": "descriptive"
+		},
+		{
+			"key": "site-guidance",
+			"name": "Site-specific guidance for the assistant (optional)<br><span class='text-muted'>e.g. conventions for your Dynamic SQL fields, or notes about tables your site has added. This is added to every request.</span>",
+			"type": "textarea"
+		},
+		{
+			"key": "limits-heading",
+			"name": "<b>Usage limits</b><br>Limits are counted in AI tokens and reset at midnight server time. A request that reaches a limit part-way through is allowed to finish, so usage can go over a limit by up to one request.",
+			"type": "descriptive"
+		},
+		{
+			"key": "daily-token-limit",
+			"name": "Daily AI token limit per project (Dynamic SQL)<br><span class='text-muted'>Blank or 0 means no limit. Can be changed for individual projects in the project's module settings.</span>",
+			"type": "text"
+		},
+		{
+			"key": "dqt-daily-token-limit",
+			"name": "Daily AI token limit for the Database Query Tool<br><span class='text-muted'>Shared by all administrators. Blank or 0 means no limit.</span>",
+			"type": "text"
+		}
+	],
+	"project-settings": [
+		{
+			"key": "project-daily-token-limit",
+			"name": "Daily AI token limit for this project (Dynamic SQL)<br><span class='text-muted'>Blank uses the system limit. 0 means no limit for this project. Anything other than a whole number is ignored, and the system limit applies.</span>",
+			"type": "text",
+			"super-users-only": true
+		}
+	]
+}
