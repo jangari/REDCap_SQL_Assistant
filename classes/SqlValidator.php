@@ -33,13 +33,14 @@ class SqlValidator
 
 	/**
 	 * @param string $mode 'dsql' or 'dqt'
-	 * @return array ['errors' => string[], 'warnings' => string[]]
+	 * @return array ['errors' => string[], 'warnings' => string[], 'tables' => string[] (existing tables the query uses, as stored)]
 	 */
 	public function validate(string $sql, string $mode): array
 	{
 		$errors = [];
 		$warnings = [];
-		if ($sql === '') return ['errors' => ['The query is empty.'], 'warnings' => []];
+		$this->referencedTables = [];
+		if ($sql === '') return ['errors' => ['The query is empty.'], 'warnings' => [], 'tables' => []];
 
 		if ($this->hasMultipleStatements($sql)) {
 			$errors[] = 'The response contains more than one SQL statement. Return a single query.';
@@ -61,7 +62,11 @@ class SqlValidator
 			$this->checkReferences($sql, $mode, $errors, $warnings);
 		}
 
-		return ['errors' => array_values(array_unique($errors)), 'warnings' => array_values(array_unique($warnings))];
+		return [
+			'errors' => array_values(array_unique($errors)),
+			'warnings' => array_values(array_unique($warnings)),
+			'tables' => $this->referencedTables,
+		];
 	}
 
 	private function hasMultipleStatements(string $sql): bool
@@ -105,6 +110,7 @@ class SqlValidator
 		}
 
 		$realTables = array_values(array_unique(array_filter(array_map([$this->schema, 'canonicalTableName'], $tables))));
+		$this->referencedTables = $realTables;
 		foreach (array_unique($colrefs) as $ref) {
 			$parts = array_map(function ($p) { return trim($p, '` '); }, explode('.', $ref));
 			$column = end($parts);
@@ -167,6 +173,7 @@ class SqlValidator
 	}
 
 	private $columnCache = [];
+	private $referencedTables = [];
 
 	private function columnExists(string $table, string $column): bool
 	{

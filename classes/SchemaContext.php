@@ -71,6 +71,16 @@ class SchemaContext
 		return $this->canonicalNames[strtolower($table)] ?? null;
 	}
 
+	/**
+	 * Tables named in the text (e.g. the request, or the query already in the editor), as stored names.
+	 * @return string[]
+	 */
+	public function tablesNamedIn(string $text): array
+	{
+		preg_match_all('/\bredcap_[a-z0-9_]+\b/i', $text, $m);
+		return array_values(array_unique(array_filter(array_map([$this, 'canonicalTableName'], $m[0]))));
+	}
+
 	/** Stage 1: compact list of table names. Numbered record-data tables are collapsed into one line. */
 	public function renderTableList(): string
 	{

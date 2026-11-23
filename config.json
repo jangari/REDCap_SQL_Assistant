@@ -31,6 +31,11 @@
 			"type": "textarea"
 		},
 		{
+			"key": "max-context-chars",
+			"name": "Maximum size of the project description sent for Dynamic SQL (characters)<br><span class='text-muted'>Default 40000 (about 10,000 tokens). For larger projects, the assistant first picks the instruments the query needs, and only those are described in full. Values below 5000 are ignored.</span>",
+			"type": "text"
+		},
+		{
 			"key": "limits-heading",
 			"name": "<b>Usage limits</b><br>Limits are counted in AI tokens and reset at midnight server time. A request that reaches a limit part-way through is allowed to finish, so usage can go over a limit by up to one request.",
 			"type": "descriptive"

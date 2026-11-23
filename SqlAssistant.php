@@ -13,7 +13,8 @@ class SqlAssistant extends AbstractExternalModule
 {
 	const MAX_REQUEST_CHARS = 2000;
 	const MAX_EXISTING_SQL_CHARS = 10000;
-	const MAX_ATTEMPTS = 3; // first attempt + up to 2 corrections after validation failures
+	const MAX_ATTEMPTS = 3; // first attempt + up to 2 corrections (after failed checks, or to add tables the AI asked for)
+	const MAX_TABLES_TOTAL = 35; // tables described in one request, including any added after the first attempt
 
 	/* ===================== Hooks ===================== */
 
@@ -90,30 +91,56 @@ class SqlAssistant extends AbstractExternalModule
 
 		$client = new AIClient();
 		$tables = [];
+		$tablesAdded = 0;
+		$projectDescription = '';
 		try {
 			$schema = new SchemaContext($this);
+			$namedText = $request . "\n" . $existingSql;
 
-			// Stage 1: choose relevant tables from the table list (names and comments only)
+			// Project structure (Dynamic SQL): sent whole if it fits; otherwise the AI also picks instruments in stage 1
+			$project = $mode === 'dsql' ? new ProjectContext($this, $projectId) : null;
+			$maxChars = $this->maxProjectChars();
+			$wholeProject = $project !== null ? $project->buildWhole($maxChars) : null;
+			$chooseInstruments = $project !== null && $wholeProject === null;
+
+			// Stage 1: choose relevant tables (and instruments, for a large project) from names and comments only
 			$selection = $this->parseModelJson($client->complete(
-				PromptBuilder::tableSelectionSystemPrompt(),
-				PromptBuilder::tableSelectionUserMessage($schema->renderTableList(), $mode, $request)
+				PromptBuilder::tableSelectionSystemPrompt($chooseInstruments),
+				PromptBuilder::tableSelectionUserMessage($schema->renderTableList(), $mode, $request,
+					$chooseInstruments ? $project->instrumentIndex(intdiv($maxChars, 2)) : '')
 			));
 			$chosen = array_filter(array_map(function ($t) use ($schema) {
 				return is_scalar($t) ? $schema->canonicalTableName((string)$t) : null;
 			}, (array)($selection['tables'] ?? [])));
 			$core = $mode === 'dsql' ? SchemaContext::DSQL_CORE_TABLES : SchemaContext::DQT_CORE_TABLES;
-			$tables = array_values(array_unique(array_merge($core, $chosen)));
+			// Tables named in the request or the existing query are always described
+			$tables = array_values(array_unique(array_merge($core, $schema->tablesNamedIn($namedText), $chosen)));
+
+			if ($project !== null) {
+				if ($wholeProject !== null) {
+					$projectText = $wholeProject;
+					$projectDescription = 'whole';
+				} else {
+					$instruments = array_filter((array)($selection['instruments'] ?? []), 'is_scalar');
+					$focus = array_merge($project->formsNamedIn($namedText), array_map('strval', $instruments));
+					$projectText = $project->buildForForms($focus, $maxChars);
+					$projectDescription = 'focused';
+				}
+			} else {
+				$projectText = '';
+			}
 
 			// Stage 2: generate the query from the selected tables' definitions (+ project structure for Dynamic SQL)
-			$projectContext = $mode === 'dsql' ? (new ProjectContext($this, $projectId))->render() : '';
 			$systemPrompt = PromptBuilder::generationSystemPrompt($mode);
-			$userMessage = PromptBuilder::generationUserMessage(
+			$baseMessage = PromptBuilder::generationUserMessage(
 				$schema->renderTableDetail($tables),
-				$projectContext,
+				$projectText,
 				(string)$this->getSystemSetting('site-guidance'),
 				$existingSql,
 				$request
 			);
+			$addedDetail = ''; // definitions of tables added after the first attempt
+			$userMessage = $baseMessage;
 
 			$validator = new SqlValidator($schema);
 			$message = $userMessage;
@@ -129,13 +156,31 @@ class SqlAssistant extends AbstractExternalModule
 				}
 				$attempts++;
 				$result = $this->normaliseResult($this->parseModelJson($client->complete($systemPrompt, $message)));
-				if ($result['sql'] === '') { // clarifying question instead of a query
-					$check = ['errors' => [], 'warnings' => []];
-					break;
+				$check = $result['sql'] === '' ? ['errors' => [], 'warnings' => [], 'tables' => []] : $validator->validate($result['sql'], $mode);
+				if ($result['sql'] !== '' && empty($check['errors'])) break;
+
+				// Tables the model asked for, or that its failed query used without having been given
+				$newTables = [];
+				if (count($tables) < self::MAX_TABLES_TOTAL) {
+					$wanted = array_merge($result['need_tables'], $check['tables'] ?? []);
+					$newTables = array_slice(array_values(array_diff(array_unique(array_filter(
+						array_map([$schema, 'canonicalTableName'], $wanted)
+					)), $tables)), 0, self::MAX_TABLES_TOTAL - count($tables));
 				}
-				$check = $validator->validate($result['sql'], $mode);
-				if (empty($check['errors'])) break;
-				$message = PromptBuilder::retryMessage($userMessage, $result['sql'], $check['errors']);
+				if (!empty($newTables)) {
+					$tables = array_merge($tables, $newTables);
+					$tablesAdded += count($newTables);
+					$addedDetail .= $schema->renderTableDetail($newTables);
+					$userMessage = $baseMessage . PromptBuilder::addedTablesSection($addedDetail);
+				}
+
+				if ($result['sql'] === '') {
+					// A clarifying question ends the request; a request for tables is answered and asked again
+					if (empty($newTables)) break;
+					$message = PromptBuilder::tablesAddedMessage($userMessage);
+				} else {
+					$message = PromptBuilder::retryMessage($userMessage, $result['sql'], $check['errors']);
+				}
 			}
 		} catch (\Throwable $e) {
 			// Tokens spent before a failure still count toward the daily limit
@@ -144,6 +189,8 @@ class SqlAssistant extends AbstractExternalModule
 					'mode' => $mode,
 					'tokens' => $client->getTokensUsed(),
 					'tables_described' => count($tables),
+					'tables_added' => $tablesAdded,
+					'project_description' => $projectDescription,
 					'ai_service' => $client->getServiceName(),
 				]);
 			}
@@ -166,6 +213,8 @@ class SqlAssistant extends AbstractExternalModule
 			'limit_reached' => $limitReached ? 1 : 0,
 			'tokens' => $client->getTokensUsed(),
 			'tables_described' => count($tables),
+			'tables_added' => $tablesAdded,
+			'project_description' => $projectDescription,
 			'ai_service' => $client->getServiceName(),
 		]);
 
@@ -177,6 +226,13 @@ class SqlAssistant extends AbstractExternalModule
 			'errors' => $check['errors'],
 			'warnings' => $warnings,
 		];
+	}
+
+	/** Character limit for the Dynamic SQL project description (system setting, or the default). */
+	private function maxProjectChars(): int
+	{
+		$value = self::parseTokenLimit($this->getSystemSetting('max-context-chars'));
+		return ($value !== null && $value >= 5000) ? $value : ProjectContext::DEFAULT_MAX_CHARS;
 	}
 
 	/* ===================== Daily token limit ===================== */
@@ -257,6 +313,7 @@ class SqlAssistant extends AbstractExternalModule
 			'explanation' => trim((string)($decoded['explanation'] ?? '')),
 			'assumptions' => array_values(array_filter(array_map('strval', $assumptions), 'strlen')),
 			'clarification' => trim((string)($decoded['clarification'] ?? '')),
+			'need_tables' => array_values(array_map('strval', array_filter((array)($decoded['need_tables'] ?? []), 'is_scalar'))),
 		];
 	}
 }
