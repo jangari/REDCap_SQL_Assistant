@@ -190,11 +190,6 @@ Each call to the GenAI service is also recorded in REDCap's own GenAI usage log,
 - The checks catch invalid tables and columns, but not every mistake. A query can pass and still return the wrong rows. Columns written without a table or alias are only flagged as warnings, because the SQL parser can't always tell them apart from keywords.
 - On the Database Query Tool, the assistant can't know which project's data table (`redcap_data`, `redcap_data2`, …) a query should read. It says so in its explanation when it matters.
 
-## Todo
-
-- Propose a framework-level AI method to the External Module Framework, so modules can use REDCap's GenAI configuration without relying on internal classes.
-- Internationalisation via the External Module Framework's i18n features.
-
 ## Citation
 
 If you use this external module for a project that generates a research output, please cite this software in addition to [citing REDCap](https://projectredcap.org/resources/citations/) itself. You can do so using the APA referencing style as below:
